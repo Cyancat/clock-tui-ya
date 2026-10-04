@@ -1,5 +1,6 @@
-# Default configuration file for tclock
-# Copy this file to ~/.config/tclock/config.toml to enable configuration
+# Example configuration file for tclock
+# Use it explicitly with: tclock --config <path-to-this-file> [mode]
+# (there is no default config path; --config is required to use a config file)
 
 # Global default settings
 [default]
@@ -44,12 +45,32 @@ execute = []
 # Default settings for countdown mode
 [countdown]
 # The target time to countdown to, eg. "2023-01-01", "20:00", "2022-12-25 20:00:00" or "2022-12-25T20:00:00-04:00"
-time = "2026-01-01"
+# time = "2026-01-01"
 # Title or description for countdown show in header
-title = "New year"
+# title = "New year"
 # Whether to show milliseconds
 show_millis = false
 # Whether to continue counting after reaching zero
 continue_on_zero = false
 # Whether to count in reverse (count up)
 reverse = false
+# Sort strategy for items: "time" (nearest first) or "config" (config file order)
+# sort = "time"
+
+# Multiple countdowns displayed simultaneously in a grid.
+# Run `tclock countdown` (without --time) to show them.
+# Grid layout: 1 -> fullscreen, 2-4 -> 2x2, 5-8 -> 4x2 (max 8 items).
+[[countdown.items]]
+time = "2027-01-01"
+title = "New year 2027"
+# Pin to a fixed grid position (1-based, row-major); optional
+# order = 1
+
+[[countdown.items]]
+time = "2026-06-07 09:00:00"
+title = "Exam"
+# Per-item overrides (all optional):
+# color = "red"
+# size = 1
+# show_millis = true
+# reverse = false

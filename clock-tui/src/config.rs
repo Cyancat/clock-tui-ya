@@ -81,6 +81,39 @@ pub struct CountdownConfig {
     pub continue_on_zero: bool,
     #[serde(default)]
     pub reverse: bool,
+    /// Sort strategy for items: "time" (by remaining time ascending) or "config" (config file order)
+    #[serde(default = "default_countdown_sort")]
+    pub sort: String,
+    /// Multiple countdowns displayed simultaneously in a grid
+    #[serde(default)]
+    pub items: Vec<CountdownItemConfig>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct CountdownItemConfig {
+    /// The target time to countdown to, same formats as [countdown].time
+    #[serde(default)]
+    pub time: Option<String>,
+    /// Title shown above the countdown, defaults to the target time string
+    #[serde(default)]
+    pub title: Option<String>,
+    /// Per-item color, falls back to the global color
+    #[serde(default)]
+    pub color: Option<String>,
+    /// Per-item size, falls back to the global size.
+    /// Rendered exactly as configured (same as timer/clock); if the grid cell
+    /// is too small the text is clipped instead of auto-shrunk.
+    #[serde(default)]
+    pub size: Option<u16>,
+    /// Per-item millisecond display, falls back to [countdown].show_millis
+    #[serde(default)]
+    pub show_millis: Option<bool>,
+    /// Per-item reverse (count up), falls back to [countdown].reverse
+    #[serde(default)]
+    pub reverse: Option<bool>,
+    /// Pin this countdown to a fixed grid position (1-based, row-major)
+    #[serde(default)]
+    pub order: Option<u16>,
 }
 
 impl Default for DefaultConfig {
@@ -132,6 +165,8 @@ impl Default for CountdownConfig {
             show_millis: false,
             continue_on_zero: false,
             reverse: false,
+            sort: default_countdown_sort(),
+            items: Vec::new(),
         }
     }
 }
@@ -160,19 +195,20 @@ fn default_timer_durations() -> Vec<String> {
     vec!["25m".to_string(), "5m".to_string()]
 }
 
-impl Config {
-    pub fn load() -> Option<Self> {
-        // ~/.config/tclock/config.toml
-        let config_path = dirs::home_dir()?
-            .join(".config")
-            .join("tclock")
-            .join("config.toml");
+fn default_countdown_sort() -> String {
+    "time".to_string()
+}
 
-        if !config_path.exists() {
+impl Config {
+    /// Load from the given path. There is no default config path:
+    /// a config file is only used when explicitly specified via `--config`.
+    pub fn load_from(path: &std::path::Path) -> Option<Self> {
+        if !path.exists() {
+            eprintln!("配置文件不存在: {}", path.display());
             return None;
         };
 
-        let content = std::fs::read_to_string(config_path).ok()?;
+        let content = std::fs::read_to_string(path).ok()?;
         match toml::from_str(&content) {
             Ok(config) => Some(config),
             Err(e) => {
@@ -180,5 +216,49 @@ impl Config {
                 None
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn countdown_template_example_parses() {
+        let content = std::fs::read_to_string(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../countdown.toml.example"),
+        )
+        .unwrap();
+        let config: Config = toml::from_str(&content).unwrap();
+        assert_eq!(config.countdown.items.len(), 6);
+        assert_eq!(config.countdown.sort, "time");
+        assert_eq!(config.countdown.items[0].order, Some(1));
+        assert_eq!(config.countdown.items[1].size, Some(2));
+        assert_eq!(
+            config.countdown.items[1].time.as_deref(),
+            Some("2026-10-05 09:00:00")
+        );
+    }
+
+    #[test]
+    fn full_config_example_parses() {
+        let content = std::fs::read_to_string(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/examples/config.toml"),
+        )
+        .unwrap();
+        let config: Config = toml::from_str(&content).unwrap();
+        assert_eq!(config.countdown.items.len(), 2);
+    }
+
+    #[test]
+    fn load_from_custom_path() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("countdown.toml.example");
+        let config = Config::load_from(&path).unwrap();
+        assert_eq!(config.countdown.items.len(), 6);
+
+        let missing = std::path::Path::new("definitely/not/exist.toml");
+        assert!(Config::load_from(missing).is_none());
     }
 }

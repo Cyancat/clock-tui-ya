@@ -1,0 +1,71 @@
+# tclock 多 countdown 配置模板
+#
+# 使用方法：复制本文件为任意路径（如 ./my-countdown.toml）后按需修改，
+# 然后运行 `tclock countdown --config ./my-countdown.toml`（不带 --time）
+# 即可同屏显示所有 countdown。注意：没有默认配置文件路径，
+# 使用配置文件必须显式指定 --config。
+#
+# 布局规则：
+#   1 个      -> 全屏
+#   2 个      -> 上下均分 2 行
+#   3 ~ 4 个  -> 2x2 网格
+#   5 ~ 6 个  -> 垂直 3 行 x 2 列（3x2）
+#   7 ~ 8 个  -> 4x2 网格
+#   超过 8 个 -> 只显示前 8 个位置，超出的忽略并打印警告
+#
+# 到期行为：结束即停止，定格显示全 0。
+
+# 共享默认值：每个 item 未覆盖时生效（可整体省略）
+[countdown]
+# 未配置 order 的条目排序方式："time" = 按剩余时间升序（最近的在前），"config" = 按本文件书写顺序
+sort = "time"
+# 是否显示毫秒（item 可用 show_millis 覆盖）
+show_millis = false
+# 是否反向计时（item 可用 reverse 覆盖）
+reverse = false
+
+# ======================= countdown 条目 =======================
+# time 支持格式：
+#   "20:00"                    今天 20:00
+#   "20:00:30"                 今天 20:00:30
+#   "2026-01-01"               2026-01-01 00:00:00
+#   "2026-01-01 20:00:00"      指定日期时间（本地时区）
+#   "2026-01-01T20:00:00+08:00" RFC3339（可带时区）
+#
+# 每项可选项：
+#   title       标题，省略时用 time 字符串占位
+#   order       固定网格位置（从 1 开始，行优先），冲突时顺延并警告
+#   color       颜色：red/green/blue/... 或 "#RRGGBB"，省略用全局颜色
+#   size        字号（>=1），省略用全局 size；严格按配置渲染，格子放不下时会截断
+#   show_millis true/false，省略用 [countdown] 共享值
+#   reverse     true/false，省略用 [countdown] 共享值
+
+[[countdown.items]]
+time = "2027-01-01"
+title = "元旦"
+order = 1
+
+[[countdown.items]]
+time = "2026-10-05 09:00:00"
+title = "高考"
+color = "red"
+size = 2
+# show_millis = true
+# reverse = false
+
+[[countdown.items]]
+time = "2026-10-31 18:00:00"
+title = "项目截止"
+
+[[countdown.items]]
+time = "2026-12-25"
+title = "圣诞节"
+
+[[countdown.items]]
+time = "2027-02-06"
+title = "春节"
+# order = 3
+
+[[countdown.items]]
+time = "2027-06-01"
+title = "年中"

@@ -13,6 +13,9 @@ pub struct Countdown {
     pub continue_on_zero: bool,
     pub(crate) reverse: bool,
     pub(crate) format: DurationFormat,
+    /// Freeze at all-zeros once the target time is reached (used in multi-countdown grid),
+    /// instead of blinking or continuing.
+    pub(crate) freeze_on_zero: bool,
 }
 
 impl Countdown {
@@ -30,16 +33,24 @@ impl Countdown {
 impl Widget for &Countdown {
     fn render(self, area: ratatui::layout::Rect, buf: &mut ratatui::buffer::Buffer) {
         let remaining_time = self.remaining_time();
-        let time_str = if remaining_time < Duration::zero() && !self.continue_on_zero {
-            if (remaining_time.num_milliseconds()).abs() % 1000 < 500 {
-                return;
-            } else {
+        let time_str = if remaining_time < Duration::zero() {
+            if self.freeze_on_zero {
                 format_duration(Duration::zero(), self.format)
+            } else if !self.continue_on_zero {
+                if (remaining_time.num_milliseconds()).abs() % 1000 < 500 {
+                    return;
+                } else {
+                    format_duration(Duration::zero(), self.format)
+                }
+            } else {
+                format_duration(remaining_time, self.format)
             }
         } else {
             format_duration(remaining_time, self.format)
         };
 
+        // Render at the configured size exactly (same as timer/clock);
+        // if the cell is too small the text is clipped.
         let font = BricksFont::new(self.size);
         let text = ClockText::new(time_str.to_string(), &font, self.style);
         render_centered(area, buf, &text, self.title.to_owned(), None);

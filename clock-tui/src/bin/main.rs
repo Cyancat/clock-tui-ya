@@ -5,6 +5,7 @@ use std::time::Duration;
 use clap::Parser;
 use clock_tui::app::App;
 use clock_tui::app::Mode;
+use clock_tui::config::Config;
 use crossterm::event::{self, Event, KeyCode};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
@@ -16,6 +17,27 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Parse command line arguments
     // Must be done first so `--help` isn't printed to the alternate screen.
     let mut app = App::parse();
+
+    // Validate countdown mode before entering the alternate screen:
+    // without --time, a config file with [countdown].time or [[countdown.items]]
+    // must be given explicitly via --config.
+    if let Some(Mode::Countdown { time: None, .. }) = &app.mode {
+        let config = app.config.as_deref().and_then(Config::load_from);
+        let has_config_time = config
+            .as_ref()
+            .map(|c| c.countdown.time.is_some())
+            .unwrap_or(false);
+        let has_items = config
+            .as_ref()
+            .map(|c| !c.countdown.items.is_empty())
+            .unwrap_or(false);
+        if !has_config_time && !has_items {
+            eprintln!(
+                "Error: countdown mode requires --time, or --config <PATH> with [countdown].time / [[countdown.items]]"
+            );
+            std::process::exit(1);
+        }
+    }
 
     // Setup terminal
     enable_raw_mode()?;

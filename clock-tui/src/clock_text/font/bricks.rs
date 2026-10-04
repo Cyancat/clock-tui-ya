@@ -102,6 +102,58 @@ impl BricksFont {
             _ => None,
         }
     }
+
+    fn draw_char_sized(
+        &self,
+        c: char,
+        x: u16,
+        y: u16,
+        size: u16,
+        style: Style,
+        buf: &mut Buffer,
+    ) {
+        if let Some(matrix) = Self::get_char_matrix(c) {
+            let mut start = Point(x, y);
+            let area_right = buf.area.right();
+            let area_bottom = buf.area.bottom();
+            for row in matrix {
+                Self::draw_row(start, row, size, style, area_right, area_bottom, buf);
+                start.1 += size;
+            }
+        }
+    }
+
+    /// Draw the 'd' (days) suffix as a 2x2 mini glyph scaled by `size`:
+    /// exactly 1/3 of the digit width (2s vs 6s) and 2/5 of the digit height
+    /// (2s vs 5s — the closest discrete approximation of 1/3), bottom-aligned
+    /// with the digit baseline.
+    fn draw_day_suffix(&self, x: u16, y: u16, style: Style, buf: &mut Buffer) {
+        let s = self.size;
+        let area_right = buf.area.right();
+        let area_bottom = buf.area.bottom();
+        let y0 = y + self.get_char_height().saturating_sub(2 * s);
+        // crude lowercase 'd': ascender on the right, bowl at the bottom
+        const PATTERN: [[bool; 2]; 2] = [[false, true], [true, true]];
+        for (r, row) in PATTERN.iter().enumerate() {
+            for (c, on) in row.iter().enumerate() {
+                if !on {
+                    continue;
+                }
+                let px = x + c as u16 * s;
+                let py = y0 + r as u16 * s;
+                if px >= area_right {
+                    continue;
+                }
+                let line = "█".repeat(s.min(area_right - px) as usize);
+                for dy in 0..s {
+                    if py + dy >= area_bottom {
+                        break;
+                    }
+                    buf.set_string(px, py + dy, line.as_str(), style);
+                }
+            }
+        }
+    }
 }
 
 impl Font for BricksFont {
@@ -117,15 +169,21 @@ impl Font for BricksFont {
         5 * self.size
     }
 
+    fn char_advance(&self, c: char) -> u16 {
+        if c == 'd' || c == ' ' {
+            // Mini day suffix and the space after it are 2*size wide
+            // (1/3 of the digit width); the space draws nothing, only advances.
+            2 * self.size + 2
+        } else {
+            self.get_char_width() + 2
+        }
+    }
+
     fn draw_char(&self, c: char, x: u16, y: u16, style: Style, buf: &mut Buffer) {
-        if let Some(matrix) = Self::get_char_matrix(c) {
-            let mut start = Point(x, y);
-            let area_right = buf.area.right();
-            let area_bottom = buf.area.bottom();
-            for row in matrix {
-                Self::draw_row(start, row, self.size, style, area_right, area_bottom, buf);
-                start.1 += self.size;
-            }
+        if c == 'd' {
+            self.draw_day_suffix(x, y, style, buf);
+        } else {
+            self.draw_char_sized(c, x, y, self.size, style, buf);
         }
     }
 }

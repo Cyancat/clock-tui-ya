@@ -1,126 +1,78 @@
-# clock-tui (tclock)
+# clock-tui (tclock) multi-countdown ver
 
-A clock app in terminal. It support the following modes:
+## Multi-countdown mode
 
-## Clock
+Configure multiple countdowns in a config file and display them all at once in a grid:
 
-![clock](./assets/demo-clock-mode.gif)
+![multi-countdown](./assets/screenshot-multi-countdown.png)
 
-## Timer
+### Quick start
 
-![timer](./assets/demo-timer-mode.gif)
-
-## Stopwatch
-
-![stopwatch](./assets/demo-stopwatch-mode.gif)
-
-## Countdown
-
-![countdown](./assets/demo-countdown-mode.gif)
-
-# Usage
-
-## Install
-
-Install executable by `cargo`:
+1. Copy the template [countdown.toml.example](./countdown.toml.example) to
+   any path you like (e.g. `./my-countdown.toml`).
+2. Edit the countdown entries.
+3. Run with `--config`:
 
 ```shell
-$ cargo install clock-tui
+$ tclock countdown --config ./my-countdown.toml
 ```
 
-## Basic usage
+Without `--config`, the modes work exactly as described in
+[README_ORI.md](./README_ORI.md).
 
-```shell
-$ tclock
-```
-Run this command to start a clock, and press `q` to exit.
+Press `q` to exit.
 
-You can always use `-h` or `--help` to show help message, for exmaple
+### Configuration
 
-```shell
-$ tclock --help
+```toml
+# Shared defaults (optional)
+[countdown]
+sort = "time"        # "time": nearest first | "config": file order
+show_millis = false
+reverse = false
 
-# or
-$ tclock clock -h
-```
+[[countdown.items]]
+time = "2027-01-01"
+title = "New Year"
+order = 1            # pin to a fixed grid position (1-based, row-major)
+size = 3             # per-item size (>=1), falls back to the global size
 
-## Clock mode, this it the default mode
-
-```shell
-$ tclock clock
-
-# Or just run
-$ tclock
-```
-
-For more details, run `tclock clock -h` to show usage.
-
-## Run timer
-
-```shell
-# Start timer for 5 minutes
-$ tclock timer -d 5m
+[[countdown.items]]
+time = "2026-10-05 09:00:00"
+title = "Exam"
+color = "red"        # per-item color, falls back to the global color
 ```
 
-The option `-d` or `--duration` to set time, for example `100s`, `5m`, `1h`, etc.
+Supported `time` formats: `"20:00"`, `"20:00:30"`, `"2026-01-01"`,
+`"2026-01-01 20:00:00"`, or RFC3339 like `"2026-01-01T20:00:00+08:00"`.
 
-You can press `Space` key to _pause_ and _resume_ the timer.
+Per-item options: `title` (falls back to the time string), `order`, `color`,
+`size`, `show_millis`, `reverse`. Items that fail to parse are skipped with a
+warning instead of failing the whole config.
 
-The timer mode also accept additional command to run when the timer ends, for example:
+### Grid layout
 
-```
-tclock timer -d 25m -e terminal-notifier -title tclock -message "'Time is up!'"
-```
+| Countdowns | Layout            |
+|------------|-------------------|
+| 1          | fullscreen        |
+| 2          | 2 rows            |
+| 3 ~ 4      | 2x2 grid          |
+| 5 ~ 6      | 3 rows x 2 cols   |
+| 7 ~ 8      | 4x2 grid          |
+| > 8        | truncated to 8 with a warning |
 
-Here we use [terminal-notifier](https://github.com/julienXX/terminal-notifier) to fire a notification when time is up.
+- Items with `order` occupy fixed positions; the rest fill free slots by the
+  `sort` strategy. Order conflicts shift to the next free slot with a warning.
+- The size is rendered exactly as configured (same as timer/clock mode);
+  if a cell is too small the text is clipped, so keep `size` modest in grids.
+- Durations longer than a day are shown as `87d 17:47:32`, with the `d`
+  rendered at 1/3 of the digit size.
+- A countdown that reaches zero freezes at all zeros (no blinking, no removal).
 
-For more details, run `tclock timer -h` to show usage.
+## Other modes
 
-## Run stopwatch
-
-```shell
-$ tclock stopwatch
-```
-
-For more details, run `tclock stopwatch -h` to show usage.
-
-## Run countdown
-
-```shell
-$ tclock countdown --time 2023-01-01 --title 'New Year 2023'`
-```
-
-You can use `-t` or `--time` to specify time, for example: `2023-01-01`, `20:00`, `'2022-12-25 20:00:00'` or `2022-12-25T20:00:00-04:00`.
-
-You can use `-r` or `--reverse` to run in count-up mode, it counts up duration since the specific time.
-
-For more details, run `tclock countdown -h` to show usage.
-
-## Customize style
-
-You can customize the styles.
-
-### Size
-
-You can use `-s` or `--size` option to custome clock size, for example:
-
-```shell
-$ tclock -s 2
-```
-
-### Color
-
-You can use `-c` or `--color` to set clock forground color, for exmaple:
-
-```shell
-# color name, any one of: 
-# Black, Red, Green, Yellow, Blue, Magenta, Cyan, Gray, DarkGray, LightRed,
-# LightGreen, LightYellow, LightBlue, LightMagenta, LightCyan, White
-$ tclock -c yellow
-
-# or hex color
-$ tclock -c '#e63946'
-```
+Clock, timer, stopwatch and single countdown modes work as before.
+See [README_ORI.md](./README_ORI.md) for full usage.
 
 # License
 
