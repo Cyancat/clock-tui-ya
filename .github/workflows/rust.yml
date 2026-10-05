@@ -3,6 +3,7 @@ name: Rust
 on:
   push:
     branches: [ "master" ]
+    tags: [ "v*" ]
   pull_request:
     branches: [ "master" ]
 
@@ -11,7 +12,6 @@ env:
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
 
     steps:
@@ -20,3 +20,34 @@ jobs:
       run: cargo build --verbose
     - name: Run tests
       run: cargo test --verbose
+
+  release-windows:
+    # 仅在推送 v* 标签时运行：构建 Windows 二进制并发布 GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: windows-latest
+    permissions:
+      contents: write  # 创建 Release 需要
+
+    steps:
+    - uses: actions/checkout@v4
+    # windows-latest 自带 MSVC 工具链，安装 stable 即可（默认 msvc host）
+    - uses: dtolnay/rust-toolchain@stable
+    - uses: Swatinem/rust-cache@v2
+    - name: Build release binary
+      run: cargo build --release --verbose -p clock-tui
+    - name: Package binary
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Force dist | Out-Null
+        Copy-Item target\release\tclock.exe dist\tclock-x86_64-pc-windows-msvc.exe
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: tclock-windows-x86_64
+        path: dist/tclock-x86_64-pc-windows-msvc.exe
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: dist/tclock-x86_64-pc-windows-msvc.exe
+        generate_release_notes: true
