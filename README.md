@@ -1,4 +1,12 @@
-# clock-tui (tclock) multi-countdown ver
+# clock-tui-ya (tclock)
+
+> Yet another `clock-tui`. Independent fork of
+> [race604/clock-tui](https://github.com/race604/clock-tui), based on upstream
+> `v0.6.1` (= `97d7c02`). This fork is developed on its own: patches are not
+> sent back upstream and upstream releases are not tracked, so the version
+> numbering restarts at `0.1.0`.
+> Upstream's original documentation is kept as-is in
+> [README_ORI.md](./README_ORI.md).
 
 ## Multi-countdown mode
 

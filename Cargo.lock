@@ -214,8 +214,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "clock-tui"
-version = "0.6.1"
+name = "clock-tui-ya"
+version = "0.1.0"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -1034,5 +1034,5 @@ dependencies = [
  "clap",
  "clap_complete",
  "clap_mangen",
- "clock-tui",
+ "clock-tui-ya",
 ]

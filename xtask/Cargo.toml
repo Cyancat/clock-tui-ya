@@ -9,4 +9,4 @@ edition = "2021"
 clap = { version = "4.0", features = ["derive"] }
 clap_mangen = "0.2"
 clap_complete = "4.0"
-clock-tui = { path = "../clock-tui" }
+clock-tui-ya = { path = "../clock-tui" }

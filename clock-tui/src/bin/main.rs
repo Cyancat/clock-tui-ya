@@ -3,9 +3,9 @@ use std::io::{self, Write};
 use std::time::Duration;
 
 use clap::Parser;
-use clock_tui::app::App;
-use clock_tui::app::Mode;
-use clock_tui::config::Config;
+use clock_tui_ya::app::App;
+use clock_tui_ya::app::Mode;
+use clock_tui_ya::config::Config;
 use crossterm::event::{self, Event, KeyCode};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};

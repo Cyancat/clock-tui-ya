@@ -1,7 +1,7 @@
 use clap::{CommandFactory, ValueEnum};
 use clap_complete::{generate_to, Shell};
 use clap_mangen::Man;
-use clock_tui::app::App;
+use clock_tui_ya::app::App;
 use std::fs::File;
 use std::io::Result;
 use std::path::{Path, PathBuf};

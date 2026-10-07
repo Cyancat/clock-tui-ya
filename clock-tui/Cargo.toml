@@ -1,13 +1,15 @@
 [package]
-name = "clock-tui"
-version = "0.6.1"
+name = "clock-tui-ya"
+version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "A clock app in terminal"
-homepage = "https://github.com/race604/clock-tui"
-repository = "https://github.com/race604/clock-tui"
+description = "A clock app in terminal, with a multi-countdown grid mode (fork of clock-tui)"
+homepage = "https://github.com/Cyancat/clock-tui-ya"
+repository = "https://github.com/Cyancat/clock-tui-ya"
 readme = "README.md"
-authors = ["Race604 <race604@gmail.com>"]
+authors = ["Race604 <race604@gmail.com>", "Cyan <cyan@yikehz.com>"]
+keywords = ["clock", "tui", "terminal", "timer", "countdown"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 ratatui = "0.25.0"
@@ -20,7 +22,7 @@ toml = "0.7"
 serde = { version = "1.0", features = ["derive"] }
 
 [lib]
-name = "clock_tui"
+name = "clock_tui_ya"
 path = "src/lib.rs"
 
 [[bin]]
