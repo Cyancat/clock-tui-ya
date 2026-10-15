@@ -215,7 +215,7 @@ dependencies = [
 
 [[package]]
 name = "clock-tui-ya"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -225,6 +225,7 @@ dependencies = [
  "regex",
  "serde",
  "toml",
+ "unicode-width",
 ]
 
 [[package]]

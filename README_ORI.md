@@ -1,5 +1,10 @@
 # clock-tui (tclock)
 
+> **Note (clock-tui-ya fork):** in this fork, running `tclock` with no
+> arguments opens an interactive setup wizard instead of jumping straight
+> into the clock. See [README.md](./README.md#interactive-setup-wizard).
+> Everything below still applies when a subcommand or any option is given.
+
 A clock app in terminal. It support the following modes:
 
 ## Clock

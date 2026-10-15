@@ -8,9 +8,12 @@ use chrono::TimeZone;
 use chrono_tz::Tz;
 use clap::Subcommand;
 use crossterm::event::KeyCode;
+use std::path::PathBuf;
 use ratatui::{
-    layout::{Constraint, Direction, Layout},
+    buffer::Buffer,
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style},
+    widgets::Widget,
     Frame,
 };
 use regex::Regex;
@@ -23,6 +26,7 @@ use self::modes::Stopwatch;
 use self::modes::Timer;
 
 pub mod modes;
+pub(crate) mod wizard;
 
 #[derive(Debug, Subcommand)]
 pub enum Mode {
@@ -101,6 +105,106 @@ pub enum Mode {
 
 use crate::config::{Config, CountdownItemConfig};
 
+/// Mode category, decoupled from the clap subcommand parameters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModeKind {
+    Clock,
+    Timer,
+    Stopwatch,
+    Countdown,
+    /// The `[[countdown.items]]` grid from a config file. Maps to the same
+    /// clap `Mode::Countdown` variant, but is a separate wizard entry
+    /// because its parameters are mutually exclusive with a single `--time`.
+    CountdownGrid,
+}
+
+/// Field-by-field resolved parameter overlay produced by the interactive
+/// wizard / run loop. Every `Option` means "explicitly specified" and takes
+/// priority over CLI values and the config file.
+///
+/// Note the double `Option`s: `Some(None)` means "explicitly cleared"
+/// (e.g. the wizard chose the local timezone, or no countdown title).
+#[derive(Debug, Clone, Default)]
+pub struct AppParams {
+    pub color: Option<Color>,
+    pub size: Option<u16>,
+    pub config: Option<PathBuf>,
+
+    // clock
+    pub timezone: Option<Option<Tz>>,
+    pub show_date: Option<bool>,
+    pub show_seconds: Option<bool>,
+
+    // shared by clock / timer / countdown
+    pub show_millis: Option<bool>,
+
+    // timer
+    pub durations: Option<Vec<Duration>>,
+    pub titles: Option<Vec<String>>,
+    pub repeat: Option<bool>,
+    pub start_paused: Option<bool>,
+    pub auto_quit: Option<bool>,
+    pub execute: Option<Vec<String>>,
+
+    // countdown
+    pub countdown_time: Option<DateTime<Local>>,
+    pub countdown_title: Option<Option<String>>,
+    pub continue_on_zero: Option<bool>,
+    pub reverse: Option<bool>,
+    /// true = render the `[[countdown.items]]` grid from the config file
+    pub use_config_items: Option<bool>,
+}
+
+/// A fully described mode request produced by the wizard.
+#[derive(Debug, Clone)]
+pub struct ModeConfig {
+    pub kind: ModeKind,
+    pub params: AppParams,
+}
+
+impl ModeConfig {
+    /// In-place mode-switch presets for the `c` / `w` / `t` hotkeys.
+    /// Params are left empty so CLI values and the config file still apply.
+    pub fn preset(kind: ModeKind) -> Self {
+        ModeConfig {
+            kind,
+            params: AppParams::default(),
+        }
+    }
+
+    /// Build the clap `Mode` variant matching this config. Field values are
+    /// mirrored from `params` where expressible; the resolved values always
+    /// come from `params` first inside `init_app`.
+    fn to_mode(&self) -> Mode {
+        let p = &self.params;
+        match self.kind {
+            ModeKind::Clock => Mode::Clock {
+                timezone: p.timezone.clone().unwrap_or(None),
+                no_date: !p.show_date.unwrap_or(true),
+                no_seconds: !p.show_seconds.unwrap_or(true),
+                millis: p.show_millis.unwrap_or(false),
+            },
+            ModeKind::Timer => Mode::Timer {
+                durations: p.durations.clone().unwrap_or_default(),
+                titles: p.titles.clone().unwrap_or_default(),
+                repeat: p.repeat.unwrap_or(false),
+                no_millis: !p.show_millis.unwrap_or(true),
+                paused: p.start_paused.unwrap_or(false),
+                auto_quit: p.auto_quit.unwrap_or(false),
+                execute: p.execute.clone().unwrap_or_default(),
+            },
+            ModeKind::Stopwatch => Mode::Stopwatch,
+            ModeKind::Countdown | ModeKind::CountdownGrid => Mode::Countdown {
+                time: p.countdown_time,
+                title: p.countdown_title.clone().unwrap_or(None),
+                continue_on_zero: p.continue_on_zero.unwrap_or(false),
+                reverse: p.reverse.unwrap_or(false),
+                millis: p.show_millis.unwrap_or(false),
+            },
+        }
+    }
+}
+
 #[derive(clap::Parser, Default)]
 #[clap(
     name = "tclock",
@@ -122,7 +226,12 @@ pub struct App {
     /// Path to the config file. No default path: a config file is only used
     /// when explicitly specified.
     #[clap(long, global = true)]
-    pub config: Option<std::path::PathBuf>,
+    pub config: Option<PathBuf>,
+
+    /// Resolved parameter overlay from the interactive wizard. Highest
+    /// priority source in `init_app`; `None` for plain CLI usage.
+    #[clap(skip)]
+    pub params: Option<AppParams>,
 
     #[clap(skip)]
     clock: Option<Clock>,
@@ -137,15 +246,25 @@ pub struct App {
 }
 
 impl App {
-    pub fn set_mode(&mut self, mode: Mode) {
-        self.mode = Some(mode);
+    /// Apply a wizard/hotkey mode request: records the resolved params,
+    /// mirrors them into `self.mode` for variant discrimination, then
+    /// rebuilds the widgets.
+    pub fn apply_mode_config(&mut self, mode_config: ModeConfig) {
+        self.mode = Some(mode_config.to_mode());
+        self.params = Some(mode_config.params);
         self.init_app();
     }
 
     pub fn init_app(&mut self) {
-        // Load config only when --config is explicitly given
-        let config = self.config.as_deref().and_then(Config::load_from);
+        // Config path: wizard params > CLI --config. No default path.
+        let config_path = self
+            .params
+            .as_ref()
+            .and_then(|p| p.config.clone())
+            .or_else(|| self.config.clone());
+        let config = config_path.as_deref().and_then(Config::load_from);
         let default_config = config.as_ref().map(|c| &c.default);
+        let params = self.params.clone();
 
         // default mode
         if self.mode.is_none() {
@@ -196,18 +315,26 @@ impl App {
             });
         }
 
-        // set default color and size
-        if self.color.is_none() {
-            self.color = default_config
-                .map(|c| parse_color(&c.color).unwrap_or(Color::Green))
-                .or(Some(Color::Green));
-        }
-        if self.size.is_none() {
-            self.size = default_config.map(|c| c.size).or(Some(1));
-        }
+        // Layered resolution for every field:
+        // wizard params > CLI explicit value > config file > hardcoded default.
+        let color = params
+            .as_ref()
+            .and_then(|p| p.color)
+            .or(self.color)
+            .or_else(|| {
+                default_config.map(|c| parse_color(&c.color).unwrap_or(Color::Green))
+            })
+            .unwrap_or(Color::Green);
+        self.color = Some(color);
+        let size = params
+            .as_ref()
+            .and_then(|p| p.size)
+            .or(self.size)
+            .or_else(|| default_config.map(|c| c.size))
+            .unwrap_or(1);
+        self.size = Some(size);
 
-        let style = Style::default().fg(self.color.unwrap_or(Color::Green));
-        let size = self.size.unwrap_or(1);
+        let style = Style::default().fg(color);
 
         // Clear widgets of other modes so mode switching does not leave stale widgets behind.
         self.clock = None;
@@ -229,13 +356,34 @@ impl App {
                 timezone,
             } => {
                 let clock_config = config.as_ref().map(|c| &c.clock);
+                let p = params.as_ref();
+                let show_date = p
+                    .and_then(|p| p.show_date)
+                    .unwrap_or_else(|| {
+                        !no_date && clock_config.map(|c| c.show_date).unwrap_or(true)
+                    });
+                let show_secs = p
+                    .and_then(|p| p.show_seconds)
+                    .unwrap_or_else(|| {
+                        !no_seconds && clock_config.map(|c| c.show_seconds).unwrap_or(true)
+                    });
+                let show_millis = p
+                    .and_then(|p| p.show_millis)
+                    .unwrap_or_else(|| {
+                        *millis || clock_config.map(|c| c.show_millis).unwrap_or(false)
+                    });
+                // Some(None) from the wizard means "local timezone, explicitly".
+                let timezone = match p.and_then(|p| p.timezone.clone()) {
+                    Some(tz) => tz,
+                    None => timezone.or_else(|| clock_config.and_then(|c| c.timezone)),
+                };
                 self.clock = Some(Clock {
                     size,
                     style,
-                    show_date: !no_date && clock_config.map(|c| c.show_date).unwrap_or(true),
-                    show_millis: *millis || clock_config.map(|c| c.show_millis).unwrap_or(false),
-                    show_secs: !no_seconds && clock_config.map(|c| c.show_seconds).unwrap_or(true),
-                    timezone: timezone.or_else(|| clock_config.and_then(|c| c.timezone)),
+                    show_date,
+                    show_millis,
+                    show_secs,
+                    timezone,
                 });
             }
             Mode::Timer {
@@ -248,21 +396,43 @@ impl App {
                 execute,
             } => {
                 let timer_config = config.as_ref().map(|c| &c.timer);
-                let format = if *no_millis {
-                    DurationFormat::HourMinSec
-                } else {
+                let p = params.as_ref();
+                let show_millis = p
+                    .and_then(|p| p.show_millis)
+                    .unwrap_or(!no_millis);
+                let format = if show_millis {
                     DurationFormat::HourMinSecDeci
+                } else {
+                    DurationFormat::HourMinSec
+                };
+                // Empty durations would panic in `Timer::remaining_time`;
+                // fall back to the CLI default.
+                let durations = p
+                    .and_then(|p| p.durations.clone())
+                    .unwrap_or_else(|| durations.to_owned());
+                let durations = if durations.is_empty() {
+                    vec![Duration::minutes(5)]
+                } else {
+                    durations
                 };
                 self.timer = Some(Timer::new(
                     size,
                     style,
-                    durations.to_owned(),
-                    titles.to_owned(),
-                    *repeat || timer_config.map(|c| c.repeat).unwrap_or(false),
+                    durations,
+                    p.and_then(|p| p.titles.clone())
+                        .unwrap_or_else(|| titles.to_owned()),
+                    p.and_then(|p| p.repeat).unwrap_or_else(|| {
+                        *repeat || timer_config.map(|c| c.repeat).unwrap_or(false)
+                    }),
                     format,
-                    *paused || timer_config.map(|c| c.start_paused).unwrap_or(false),
-                    *auto_quit || timer_config.map(|c| c.auto_quit).unwrap_or(false),
-                    execute.to_owned(),
+                    p.and_then(|p| p.start_paused).unwrap_or_else(|| {
+                        *paused || timer_config.map(|c| c.start_paused).unwrap_or(false)
+                    }),
+                    p.and_then(|p| p.auto_quit).unwrap_or_else(|| {
+                        *auto_quit || timer_config.map(|c| c.auto_quit).unwrap_or(false)
+                    }),
+                    p.and_then(|p| p.execute.clone())
+                        .unwrap_or_else(|| execute.to_owned()),
                 ));
             }
             Mode::Stopwatch => {
@@ -276,30 +446,50 @@ impl App {
                 millis,
             } => {
                 let countdown_config = config.as_ref().map(|c| &c.countdown);
-                let single_format =
-                    if *millis || countdown_config.map(|c| c.show_millis).unwrap_or(false) {
-                        DurationFormat::HourMinSecDeci
-                    } else {
-                        DurationFormat::HourMinSec
-                    };
+                let p = params.as_ref();
+                let show_millis = p.and_then(|p| p.show_millis).unwrap_or_else(|| {
+                    *millis || countdown_config.map(|c| c.show_millis).unwrap_or(false)
+                });
+                let single_format = if show_millis {
+                    DurationFormat::HourMinSecDeci
+                } else {
+                    DurationFormat::HourMinSec
+                };
+                let continue_on_zero = p.and_then(|p| p.continue_on_zero).unwrap_or_else(|| {
+                    *continue_on_zero
+                        || countdown_config
+                            .map(|c| c.continue_on_zero)
+                            .unwrap_or(false)
+                });
+                let reverse = p
+                    .and_then(|p| p.reverse)
+                    .unwrap_or_else(|| *reverse || countdown_config.map(|c| c.reverse).unwrap_or(false));
+                // Some(None) from the wizard means "explicitly no title".
+                let title = match p.and_then(|p| p.countdown_title.clone()) {
+                    Some(t) => t,
+                    None => title.to_owned(),
+                };
+                let single_time = p.and_then(|p| p.countdown_time).or(*time);
 
-                if let Some(t) = time {
-                    // Single countdown from CLI `--time`: keep the original behavior (blink past zero).
+                if let Some(t) = single_time {
+                    // Single countdown from the wizard or CLI `--time`:
+                    // keep the original behavior (blink past zero).
                     self.countdowns = vec![Some(Countdown {
                         size,
                         style,
-                        time: *t,
-                        title: title.to_owned(),
-                        continue_on_zero: *continue_on_zero
-                            || countdown_config
-                                .map(|c| c.continue_on_zero)
-                                .unwrap_or(false),
-                        reverse: *reverse || countdown_config.map(|c| c.reverse).unwrap_or(false),
+                        time: t,
+                        title,
+                        continue_on_zero,
+                        reverse,
                         format: single_format,
                         freeze_on_zero: false,
                     })];
                 } else if countdown_config.map(|c| !c.items.is_empty()).unwrap_or(false) {
-                    // Multiple countdowns from config [[countdown.items]]: grid layout, freeze at zero.
+                    // Multiple countdowns from config [[countdown.items]]: grid
+                    // layout, freeze at zero. The wizard's grid entry lands here
+                    // too (its validation guarantees items exist); if the config
+                    // vanished in between we degrade to the single/warning paths
+                    // instead of panicking on a missing config.
                     self.countdowns = build_countdown_slots(
                         &countdown_config.unwrap().items,
                         countdown_config.unwrap(),
@@ -315,11 +505,9 @@ impl App {
                         size,
                         style,
                         time: t,
-                        title: countdown_config.map(|c| c.title.clone()).unwrap_or(None),
-                        continue_on_zero: countdown_config
-                            .map(|c| c.continue_on_zero)
-                            .unwrap_or(false),
-                        reverse: countdown_config.map(|c| c.reverse).unwrap_or(false),
+                        title,
+                        continue_on_zero,
+                        reverse,
                         format: single_format,
                         freeze_on_zero: false,
                     })];
@@ -365,6 +553,15 @@ impl App {
             println!("Stopwatch time: {}", w.get_display_time());
         }
     }
+
+    /// Drop all mode widgets. Used when returning from a run to the wizard so
+    /// a later `on_exit` does not print stale results a second time.
+    pub(crate) fn clear_widgets(&mut self) {
+        self.clock = None;
+        self.timer = None;
+        self.stopwatch = None;
+        self.countdowns.clear();
+    }
 }
 
 fn handle_key<T: Pause>(widget: &mut T, key: KeyCode) {
@@ -396,12 +593,37 @@ fn grid_shape(n: usize) -> (usize, usize) {
 ///   are shifted to the next free slot with a warning.
 /// - Remaining items fill the free slots, sorted by remaining time ascending
 ///   (or config order when `[countdown].sort = "config"`).
-fn build_countdown_slots(
+pub(crate) fn build_countdown_slots(
     items: &[CountdownItemConfig],
     shared: &crate::config::CountdownConfig,
     global_style: Style,
     global_size: u16,
 ) -> Vec<Option<Countdown>> {
+    build_countdown_slots_impl(items, shared, global_style, global_size, true)
+}
+
+/// Silent variant for the wizard's preview pane: stderr output would corrupt
+/// the alternate screen, so warnings are dropped (the wizard validates
+/// upfront instead).
+pub(crate) fn build_countdown_slots_silent(
+    items: &[CountdownItemConfig],
+    shared: &crate::config::CountdownConfig,
+    global_style: Style,
+    global_size: u16,
+) -> Vec<Option<Countdown>> {
+    build_countdown_slots_impl(items, shared, global_style, global_size, false)
+}
+
+fn build_countdown_slots_impl(
+    items: &[CountdownItemConfig],
+    shared: &crate::config::CountdownConfig,
+    global_style: Style,
+    global_size: u16,
+    warn: bool,
+) -> Vec<Option<Countdown>> {
+    macro_rules! warnln {
+        ($($arg:tt)*) => { if warn { eprintln!($($arg)*) } };
+    }
     struct Pending {
         countdown: Countdown,
         order: Option<u16>,
@@ -412,14 +634,14 @@ fn build_countdown_slots(
         let time_str = match &item.time {
             Some(t) => t,
             None => {
-                eprintln!("警告: countdown.items[{}] 缺少 time，已跳过", index);
+                warnln!("警告: countdown.items[{}] 缺少 time，已跳过", index);
                 continue;
             }
         };
         let time = match parse_datetime(time_str) {
             Ok(t) => t,
             Err(e) => {
-                eprintln!(
+                warnln!(
                     "警告: countdown.items[{}] 的 time \"{}\" 无效 ({}), 已跳过",
                     index, time_str, e
                 );
@@ -430,7 +652,7 @@ fn build_countdown_slots(
             Some(c) => match parse_color(c) {
                 Ok(color) => Style::default().fg(color),
                 Err(e) => {
-                    eprintln!(
+                    warnln!(
                         "警告: countdown.items[{}] 的 color \"{}\" 无效 ({}), 使用默认颜色",
                         index, c, e
                     );
@@ -468,7 +690,7 @@ fn build_countdown_slots(
     }
 
     if pendings.len() > MAX_COUNTDOWNS {
-        eprintln!(
+        warnln!(
             "警告: countdown 数量超过上限 {}, 超出的 {} 条已忽略",
             MAX_COUNTDOWNS,
             pendings.len() - MAX_COUNTDOWNS
@@ -493,7 +715,7 @@ fn build_countdown_slots(
                 match target {
                     Some(idx) => {
                         if idx != start {
-                            eprintln!(
+                            warnln!(
                                 "警告: order {} 的位置已被占用, 顺延到位置 {}",
                                 order,
                                 idx + 1
@@ -505,7 +727,7 @@ fn build_countdown_slots(
                 }
             }
             Some(order) => {
-                eprintln!(
+                warnln!(
                     "警告: order {} 超出范围 (1-{}), 按未指定位置处理",
                     order, capacity
                 );
@@ -531,10 +753,20 @@ fn build_countdown_slots(
 /// Render countdown slots in the grid given by `grid_shape`.
 fn render_countdown_grid(countdowns: &[Option<Countdown>], f: &mut Frame) {
     let area = f.size();
+    render_countdown_grid_to(countdowns, area, f.buffer_mut());
+}
+
+/// Buffer-level variant of `render_countdown_grid`, used by the wizard's
+/// preview pane which only has a sub-`Rect`, not a full `Frame`.
+pub(crate) fn render_countdown_grid_to(
+    countdowns: &[Option<Countdown>],
+    area: Rect,
+    buf: &mut Buffer,
+) {
     let (rows, cols) = grid_shape(countdowns.len());
     if rows <= 1 && cols <= 1 {
         if let Some(Some(ref w)) = countdowns.first() {
-            f.render_widget(w, area);
+            w.render(area, buf);
         }
         return;
     }
@@ -550,13 +782,13 @@ fn render_countdown_grid(countdowns: &[Option<Countdown>], f: &mut Frame) {
             .split(*row);
         for (c, cell) in col_areas.iter().enumerate() {
             if let Some(Some(ref w)) = countdowns.get(r * cols + c) {
-                f.render_widget(w, *cell);
+                w.render(*cell, buf);
             }
         }
     }
 }
 
-fn parse_duration(s: &str) -> Result<Duration, String> {
+pub(crate) fn parse_duration(s: &str) -> Result<Duration, String> {
     let reg = Regex::new(r"^(\d+)([smhdSMHD])$").unwrap();
     let cap = reg
         .captures(s)
@@ -574,7 +806,7 @@ fn parse_duration(s: &str) -> Result<Duration, String> {
     }
 }
 
-fn parse_color(s: &str) -> Result<Color, String> {
+pub(crate) fn parse_color(s: &str) -> Result<Color, String> {
     let s = s.to_lowercase();
     let reg = Regex::new(r"^#([0-9a-f]{6})$").unwrap();
     match s.as_str() {
@@ -607,7 +839,7 @@ fn parse_color(s: &str) -> Result<Color, String> {
     }
 }
 
-fn parse_datetime(s: &str) -> Result<DateTime<Local>, String> {
+pub(crate) fn parse_datetime(s: &str) -> Result<DateTime<Local>, String> {
     let s = s.trim();
     let today = Local::now().date_naive();
 
@@ -642,7 +874,7 @@ fn parse_datetime(s: &str) -> Result<DateTime<Local>, String> {
     Err("Invalid time format".to_string())
 }
 
-fn parse_timezone(s: &str) -> Result<Tz, String> {
+pub(crate) fn parse_timezone(s: &str) -> Result<Tz, String> {
     s.parse()
 }
 
@@ -802,5 +1034,93 @@ mod tests {
         assert!(text.contains("one"));
         assert!(text.contains("two"));
         assert!(text.contains('█'));
+    }
+
+    // ---- P0: wizard parameter layering (T7 / T8 / T9) ----
+
+    #[test]
+    fn wizard_params_override_config_file() {
+        // examples/config.toml sets [default] color = "green" and
+        // [timer] show_millis = true; the wizard explicitly overrides both.
+        let config_path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/config.toml");
+        let mut app = App::default();
+        app.apply_mode_config(ModeConfig {
+            kind: ModeKind::Timer,
+            params: AppParams {
+                durations: Some(vec![Duration::minutes(25)]),
+                show_millis: Some(false),
+                color: Some(Color::Red),
+                config: Some(config_path),
+                ..Default::default()
+            },
+        });
+        let timer = app.timer.as_ref().expect("timer widget should exist");
+        assert_eq!(
+            timer.format,
+            DurationFormat::HourMinSec,
+            "wizard show_millis=false must beat the config file's true"
+        );
+        assert_eq!(timer.style.fg, Some(Color::Red));
+        assert_eq!(timer.durations, vec![Duration::minutes(25)]);
+    }
+
+    #[test]
+    fn without_params_config_file_still_applies() {
+        let config_path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/config.toml");
+        let mut app = App {
+            config: Some(config_path),
+            ..Default::default()
+        };
+        // Bare default-mode derivation: examples/config.toml has mode = "clock".
+        app.init_app();
+        assert!(app.clock.is_some());
+        assert_eq!(app.color, Some(Color::Green));
+    }
+
+    #[test]
+    fn cli_parse_timer_regression() {
+        use clap::Parser;
+        let app = App::parse_from(["tclock", "timer", "-d", "25m"]);
+        match app.mode {
+            Some(Mode::Timer { ref durations, .. }) => {
+                assert_eq!(durations, &vec![Duration::minutes(25)]);
+            }
+            _ => panic!("expected timer mode"),
+        }
+        assert!(app.params.is_none());
+    }
+
+    #[test]
+    fn cli_bare_invocation_has_no_mode() {
+        use clap::Parser;
+        let app = App::parse_from(["tclock"]);
+        assert!(app.mode.is_none());
+        assert!(app.color.is_none());
+    }
+
+    #[test]
+    fn empty_timer_durations_fall_back_to_default() {
+        // The old `t` hotkey constructed Mode::Timer with durations: vec![],
+        // which panics in Timer::remaining_time. The resolution layer must
+        // substitute the CLI default instead.
+        let mut app = App::default();
+        app.apply_mode_config(ModeConfig::preset(ModeKind::Timer));
+        let timer = app.timer.as_ref().unwrap();
+        assert_eq!(timer.durations, vec![Duration::minutes(5)]);
+    }
+
+    #[test]
+    fn hotkey_presets_switch_widgets() {
+        let mut app = App::default();
+        app.apply_mode_config(ModeConfig::preset(ModeKind::Clock));
+        assert!(app.clock.is_some());
+        app.apply_mode_config(ModeConfig::preset(ModeKind::Stopwatch));
+        assert!(app.stopwatch.is_some());
+        assert!(app.clock.is_none(), "stale widgets must be cleared");
+        app.apply_mode_config(ModeConfig::preset(ModeKind::Timer));
+        assert!(app.timer.is_some());
+        assert!(app.stopwatch.is_none());
     }
 }

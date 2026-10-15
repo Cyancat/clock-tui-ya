@@ -1,5 +1,5 @@
 use chrono_tz::Tz;
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 
 fn deserialize_timezone<'de, D>(deserializer: D) -> Result<Option<Tz>, D::Error>
 where
@@ -217,6 +217,64 @@ impl Config {
             }
         }
     }
+
+    /// Silent variant of `load_from` for the interactive wizard: prints
+    /// nothing (stderr output would corrupt the alternate screen), the
+    /// wizard surfaces failures in its own status line instead.
+    pub fn load_from_quiet(path: &std::path::Path) -> Option<Self> {
+        let content = std::fs::read_to_string(path).ok()?;
+        toml::from_str(&content).ok()
+    }
+}
+
+/// Small persisted state for the interactive wizard, written next to the
+/// executable as `tclock-wizard.toml`. Currently only remembers the last
+/// successfully loaded `--config` path so the wizard can prefill it.
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct WizardState {
+    #[serde(default)]
+    pub config_path: Option<std::path::PathBuf>,
+}
+
+impl WizardState {
+    /// `tclock-wizard.toml` in the executable's directory.
+    fn state_file_path() -> Option<std::path::PathBuf> {
+        std::env::current_exe()
+            .ok()?
+            .parent()
+            .map(|dir| dir.join("tclock-wizard.toml"))
+    }
+
+    /// Load the persisted state; missing or corrupt file yields defaults.
+    pub fn load() -> Self {
+        Self::load_from_path(Self::state_file_path())
+    }
+
+    fn load_from_path(path: Option<std::path::PathBuf>) -> Self {
+        path.and_then(|p| std::fs::read_to_string(p).ok())
+            .and_then(|c| toml::from_str(&c).ok())
+            .unwrap_or_default()
+    }
+
+    /// Persist the state. `config_path = None` deletes the state file.
+    /// All IO errors are ignored: this is a convenience, not critical state.
+    pub fn save(&self) {
+        Self::save_to(Self::state_file_path(), self)
+    }
+
+    fn save_to(path: Option<std::path::PathBuf>, state: &Self) {
+        let Some(path) = path else { return };
+        match &state.config_path {
+            Some(_) => {
+                if let Ok(content) = toml::to_string(state) {
+                    let _ = std::fs::write(path, content);
+                }
+            }
+            None => {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -260,5 +318,35 @@ mod tests {
 
         let missing = std::path::Path::new("definitely/not/exist.toml");
         assert!(Config::load_from(missing).is_none());
+    }
+
+    #[test]
+    fn wizard_state_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("tclock-state-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("tclock-wizard.toml");
+
+        // Missing file → defaults.
+        assert!(WizardState::load_from_path(Some(path.clone())).config_path.is_none());
+
+        // Save with a path → loads back.
+        let state = WizardState {
+            config_path: Some(std::path::PathBuf::from(r"E:\Repo\config.toml")),
+        };
+        WizardState::save_to(Some(path.clone()), &state);
+        let loaded = WizardState::load_from_path(Some(path.clone()));
+        assert_eq!(
+            loaded.config_path.as_deref(),
+            Some(std::path::Path::new(r"E:\Repo\config.toml"))
+        );
+
+        // Windows backslashes survive TOML serialization.
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(raw.contains("config_path"));
+
+        // Clearing removes the file.
+        WizardState::save_to(Some(path.clone()), &WizardState::default());
+        assert!(!path.exists());
+        let _ = std::fs::remove_dir(&dir);
     }
 }

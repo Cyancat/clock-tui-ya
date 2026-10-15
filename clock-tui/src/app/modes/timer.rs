@@ -21,7 +21,7 @@ pub struct Timer {
     pub titles: Vec<String>,
     pub execute: Vec<String>,
     auto_quit: bool,
-    format: DurationFormat,
+    pub(crate) format: DurationFormat,
     passed: Duration,
     started_at: Option<DateTime<Local>>,
     execute_result: RefCell<Option<String>>,

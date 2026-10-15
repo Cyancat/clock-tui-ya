@@ -8,6 +8,34 @@
 > Upstream's original documentation is kept as-is in
 > [README_ORI.md](./README_ORI.md).
 
+## Interactive setup wizard
+
+Run `tclock` with **no arguments** to open an interactive setup wizard:
+pick a mode, edit its parameters with a live preview, then press `Ctrl+R`
+to run. Pressing `q` inside a running mode returns to the wizard; pressing
+`q` in the mode list exits.
+
+![wizard mode list](./assets/screenshot-wizard-modes.png)
+![wizard form with live preview](./assets/screenshot-wizard-form.png)
+
+- Mode list: `↑/↓` select, `Enter` open the parameter form, `Ctrl+R` run
+  immediately with the current parameters, `q`/`Esc`/`Ctrl+C` quit.
+  Single countdown and the config-file grid are two separate entries
+  (**Countdown** / **Countdown Grid**) since their parameters conflict.
+- Form: `Tab`/`↑/↓` move between fields, `Enter` edit, `Space`/`←/→` toggle
+  or cycle, `a`/`d` add/remove list items, `Ctrl+R` run, `Esc` back
+  (unsaved changes ask for confirmation).
+- Every mode form also has the global fields: color, size and an optional
+  `--config` path (loaded inline; **Countdown Grid** renders the file's
+  `[[countdown.items]]` grid).
+- The last successfully loaded config path is remembered in
+  `tclock-wizard.toml` next to the executable and prefilled (and
+  pre-loaded) on the next launch; clearing the field removes the file.
+- Invalid parameters are flagged inline and block `Ctrl+R`.
+- Wizard choices override the config file field-by-field.
+- Anything on the command line (e.g. `tclock -c red`, `tclock timer -d 5m`)
+  skips the wizard and behaves exactly as before.
+
 ## Multi-countdown mode
 
 Configure multiple countdowns in a config file and display them all at once in a grid:

@@ -1,6 +1,6 @@
 [package]
 name = "clock-tui-ya"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "MIT"
 description = "A clock app in terminal, with a multi-countdown grid mode (fork of clock-tui)"
@@ -20,6 +20,9 @@ clap = { version = "4.0", features = ["derive"] }
 regex = "1.7"
 toml = "0.7"
 serde = { version = "1.0", features = ["derive"] }
+# Already a transitive dep of ratatui; used to place the wizard edit cursor
+# correctly when labels / values contain CJK (double-width) characters.
+unicode-width = "0.1"
 
 [lib]
 name = "clock_tui_ya"

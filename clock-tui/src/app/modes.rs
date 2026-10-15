@@ -22,7 +22,7 @@ use ratatui::{
 pub(crate) use stopwatch::Stopwatch;
 pub(crate) use timer::Timer;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum DurationFormat {
     /// Hours, minutes, seconds, deciseconds
     HourMinSecDeci,
